@@ -10,7 +10,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 
 object About : Table("about") {
-    val uuid = varchar("about_uuid", 36).index()
+    val uuid = varchar("about_uuid", 36).uniqueIndex()
     val about = varchar("about_about", 512)
     override val primaryKey = PrimaryKey(uuid)
 }
@@ -26,13 +26,13 @@ object Mail : Table("mail") {
 }
 
 object Nick : Table("nick") {
-    val uuid = varchar("nick_uuid", 36).index()
+    val uuid = varchar("nick_uuid", 36).uniqueIndex()
     val nick = varchar("nick_nick", 2048)
     override val primaryKey = PrimaryKey(uuid)
 }
 
 object UsernameCache : Table("username_cache") {
-    val uuid = varchar("cache_user", 36).index()
+    val uuid = varchar("cache_user", 36).uniqueIndex()
     val username = varchar("cache_username", 16).index()
     override val primaryKey = PrimaryKey(uuid)
 }
@@ -41,6 +41,9 @@ object Setting : Table("setting") {
     val uuid = varchar("setting_uuid", 36).index()
     val key = varchar("setting_key", 16).index()
     val value = blob("setting_value")
+    init {
+        Setting.uniqueIndex(uuid, key)
+    }
 }
 
 fun serializeSetting(value: JsonElement) : ExposedBlob =

@@ -19,10 +19,7 @@ import chattore.entity.ChattORESpec
 import chattore.listener.ChatListener
 import chattore.listener.DiscordListener
 import com.velocitypowered.api.proxy.Player
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.TextReplacementConfig
 import net.kyori.adventure.text.event.ClickEvent
@@ -272,7 +269,11 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
                     && (it.uniqueId != exclude)
         }
         for (user in privileged) {
-            user.sendMessage(component)
+            val setting = database.getSettings(user.uniqueId)["spy"]
+            val spying = setting?.jsonPrimitive?.booleanOrNull ?: false
+            if (spying) {
+                user.sendMessage(component)
+            }
         }
     }
 

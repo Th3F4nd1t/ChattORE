@@ -22,8 +22,6 @@ import com.velocitypowered.api.proxy.Player
 import kotlinx.serialization.json.*
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.TextReplacementConfig
-import net.kyori.adventure.text.event.ClickEvent
-import net.kyori.adventure.text.event.HoverEvent
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 import net.luckperms.api.LuckPerms
 import net.luckperms.api.LuckPermsProvider
@@ -33,6 +31,7 @@ import org.javacord.api.DiscordApiBuilder
 import org.javacord.api.entity.message.MessageBuilder
 import org.slf4j.Logger
 import java.io.File
+import java.net.URL
 import java.nio.file.Path
 import java.util.*
 
@@ -44,24 +43,24 @@ private const val VERSION = "0.1.0-SNAPSHOT"
     version = VERSION,
     url = "https://openredstone.org",
     description = "Because we want to have a chat system that actually wOREks for us.",
-    authors = ["Nickster258", "PaukkuPalikka", "StackDoubleFlow"],
+    authors = ["Nickster258", "PaukkuPalikka", "StackDoubleFlow", "sodiboo"],
     dependencies = [Dependency(id = "luckperms")]
 )
 class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @DataDirectory dataFolder: Path) {
     lateinit var luckPerms: LuckPerms
     lateinit var config: Config
     lateinit var database: Storage
-    lateinit var discordNetwork: DiscordApi
-    val onlinePlayers: MutableSet<UUID> = Collections.synchronizedSet(mutableSetOf())
+    var discordNetwork: DiscordApi? = null
     private val replyMap: MutableMap<UUID, UUID> = hashMapOf()
     private var discordMap: Map<String, DiscordApi> = hashMapOf()
+    private var fileTypeMap: Map<String, List<String>> = hashMapOf()
     private var emojis: Map<String, String> = hashMapOf()
     private var emojisToNames: Map<String, String> = hashMapOf()
     private val dataFolder = dataFolder.toFile()
     private val uuidRegex = """[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""".toRegex()
     private var chatReplacements: MutableList<TextReplacementConfig> = mutableListOf(
-        formatReplacement("\\*\\*", "b"),
-        formatReplacement("\\*", "i"),
+        formatReplacement("**", "b"),
+        formatReplacement("*", "i"),
         formatReplacement("__", "u"),
         formatReplacement("~~", "st")
     )
@@ -82,10 +81,9 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
         }
         this.javaClass.getResourceAsStream("/filetypes.json")?.let { inputStream ->
             val jsonElement = Json.parseToJsonElement(inputStream.reader().readText())
-            val fileTypeMap = jsonElement.jsonObject.mapValues { (_, value) ->
+            fileTypeMap = jsonElement.jsonObject.mapValues { (_, value) ->
                 value.jsonArray.map { it.jsonPrimitive.content }
             }
-            chatReplacements.add(urlReplacementConfig(fileTypeMap))
             fileTypeMap.forEach { (key, values) ->
                 logger.info("Loaded ${values.size} of type $key")
             }
@@ -117,11 +115,16 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
             registerCommand(Reply(config, this@ChattORE, replyMap))
             setDefaultExceptionHandler(::handleCommandException, false)
             commandCompletions.registerCompletion("bool") { listOf("true", "false")}
+            commandCompletions.registerCompletion("colors") { hexColorMap.flatMap { (key, value)  ->
+                listOf("&$key", value.first, value.second)
+            }}
             commandCompletions.registerCompletion("emojis") { emojis.keys }
             commandCompletions.registerCompletion("usernameCache") { database.uuidToUsernameCache.values }
+            commandCompletions.registerCompletion("username") { listOf(it.player.username) }
             commandCompletions.registerCompletion("uuidAndUsernameCache") {
                 database.uuidToUsernameCache.values + database.uuidToUsernameCache.keys.map { it.toString() }
             }
+            commandCompletions.registerCompletion("nickPresets") { config[ChattORESpec.nicknamePresets].keys }
         }
         proxy.eventManager.register(this, ChatListener(this))
     }
@@ -135,7 +138,10 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
             mapOf(
                 "about" to (this.database.getAbout(user.uniqueId) ?: "no about yet :(").toComponent(),
                 "ign" to ign.toComponent(),
-                "nickname" to (this.database.getNickname(user.uniqueId) ?: "No nickname set").miniMessageDeserialize(),
+                "nickname" to (this.database.getNickname(user.uniqueId) ?: "No nickname set")
+                    .render(mapOf(
+                        "username" to ign.toComponent(),
+                    )),
                 "rank" to group.legacyDeserialize(),
             )
         )
@@ -206,12 +212,91 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
         return loadedConfig
     }
 
+    fun sendMessage(
+        replyMap: MutableMap<UUID, UUID>,
+        config: Config,
+        player: Player,
+        targetPlayer: Player,
+        args: Array<String>
+    ) {
+        val statement = args.joinToString(" ")
+        logger.info("${player.username} (${player.uniqueId}) -> " +
+            "${targetPlayer.username} (${targetPlayer.uniqueId}): $statement")
+        player.sendMessage(
+            config[ChattORESpec.format.messageSent].render(
+                mapOf(
+                    "message" to prepareChatMessage(statement, player),
+                    "recipient" to targetPlayer.username.toComponent()
+                )
+            )
+        )
+        targetPlayer.sendMessage(
+            config[ChattORESpec.format.messageReceived].render(
+                mapOf(
+                    "message" to prepareChatMessage(statement, player),
+                    "sender" to player.username.toComponent()
+                )
+            )
+        )
+        replyMap[targetPlayer.uniqueId] = player.uniqueId
+        replyMap[player.uniqueId] = targetPlayer.uniqueId
+    }
+
+    private fun prepareChatMessage(message: String, player: Player?): Component {
+        fun String.replaceObfuscate(canObfuscate: Boolean): String =
+            if (canObfuscate) {
+                this
+            } else {
+                this.replace("&k", "")
+            }
+        val canObfuscate = player?.hasPermission("chattore.chat.obfuscate") ?: false
+        val urlRegex = """<?((http|https)://([\w_-]+(?:\.[\w_-]+)+)([^\s'<>]+)?)>?""".toRegex()
+        val parts = urlRegex.split(message)
+        val matches = urlRegex.findAll(message).iterator()
+        val builder = Component.text()
+        parts.forEach { part ->
+            builder.append(part.replaceObfuscate(canObfuscate).legacyDeserialize())
+            if (matches.hasNext()) {
+                val nextMatch = matches.next()
+                val link = URL(nextMatch.groupValues[1])
+                var type = "link"
+                var name = link.host
+                if (link.file.isNotEmpty()) {
+                    val last = link.path.split("/").last()
+                    if (last.contains('.') && !last.endsWith('.') && !last.startsWith('.')) {
+                        type = last.split('.').last()
+                        name = if (last.length > 15) {
+                            last.substring(0, 15) + "…." + type
+                        } else {
+                            last
+                        }
+                    }
+                }
+                val contentType = fileTypeMap.entries.find { type in it.value }?.key
+                val symbol = when (contentType) {
+                    "IMAGE" -> "\uD83D\uDDBC"
+                    "AUDIO" -> "\uD83D\uDD0A"
+                    "VIDEO" -> "\uD83C\uDFA5"
+                    "TEXT" -> "\uD83D\uDCDD"
+                    else -> "\uD83D\uDCCE"
+                }
+                builder.append(("<aqua><click:open_url:'$link'>" +
+                    "<hover:show_text:'<aqua>$link'>" +
+                    "[$symbol $name]" +
+                    "</hover>" +
+                    "</click><reset>").miniMessageDeserialize())
+            }
+        }
+        return builder.build().performReplacements(chatReplacements)
+    }
+
     fun broadcast(component: Component) {
         proxy.allPlayers.forEach { it.sendMessage(component) }
     }
 
     fun broadcastPlayerConnection(message: String) {
-        discordNetwork.getTextChannelById(config[ChattORESpec.discord.channelId]).ifPresent {
+        val discord = discordNetwork ?: return
+        discord.getTextChannelById(config[ChattORESpec.discord.channelId])?.ifPresent {
             it.sendMessage(message)
         }
     }
@@ -221,18 +306,22 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
         val luckUser = userManager.getUser(user) ?: return
         val name = this.database.getNickname(user) ?: this.proxy.getPlayer(user).get().username
         val player = this.proxy.getPlayer(user).get()
-        val sender = name.miniMessageDeserialize().hoverEvent(
-            HoverEvent.showText("${player.username} | <i>Click for more</i>".miniMessageDeserialize())
-        ).clickEvent(
-            ClickEvent.runCommand("/playerprofile info ${player.username}")
-        )
-        val prefix = luckUser.cachedData.metaData.prefix ?: return
+        val sender = name.render(mapOf(
+            "username" to player.username.toComponent()
+        )).let {
+            "<click:run_command:'/playerprofile info ${player.username}'><message></click>".render(it)
+        };
+
+        val prefix = luckUser.cachedData.metaData.prefix
+            ?: luckUser.primaryGroup.replaceFirstChar(Char::uppercaseChar)
+
         broadcast(
             config[ChattORESpec.format.global].render(
                 mapOf(
-                    "message" to message.prepareChatMessage(chatReplacements),
+                    "message" to prepareChatMessage(message, player),
                     "sender" to sender,
-                    "prefix" to prefix.legacyDeserialize()
+                    "username" to Component.text(player.username),
+                    "prefix" to prefix.legacyDeserialize(),
                 )
             )
         )
@@ -253,11 +342,17 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
     }
 
     fun broadcastDiscordMessage(sender: String, message: String) {
+        val urlMarkdownRegex = """\[([^]]*)\]\(\s?(\S+)\s?\)""".toRegex()
+        val transformedMessage = message.replace(urlMarkdownRegex) { matchResult ->
+            val text = matchResult.groupValues[1].trim()
+            val url = matchResult.groupValues[2].trim()
+            "$text: $url"
+        }.replace("""\s+""".toRegex(), " ")
         broadcast(
             config[ChattORESpec.format.discord].render(
                 mapOf(
                     "sender" to sender.toComponent(),
-                    "message" to message.prepareChatMessage(chatReplacements)
+                    "message" to prepareChatMessage(transformedMessage, null)
                 )
             )
         )

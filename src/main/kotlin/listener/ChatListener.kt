@@ -1,6 +1,7 @@
 package chattore.listener
 
 import chattore.ChattORE
+import chattore.discordEscape
 import chattore.entity.ChattORESpec
 import chattore.render
 import chattore.toComponent
@@ -34,6 +35,7 @@ class ChatListener(
 
     @Subscribe
     fun joinEvent(event: LoginEvent) {
+        joinMessage(event)
         val unreadCount = chattORE.database.getMessages(event.player.uniqueId).filter { !it.read }.size
         if (unreadCount > 0)
             chattORE.proxy.scheduler.buildTask(chattORE, Runnable {
@@ -46,13 +48,12 @@ class ChatListener(
         if (!chattORE.config[ChattORESpec.clearNicknameOnChange]) return
         val existingName = chattORE.database.uuidToUsernameCache[event.player.uniqueId] ?: return
         if (existingName == event.player.username) return
+        val nickname = chattORE.database.getNickname(event.player.uniqueId);
+        if (nickname?.contains("<username>") ?: false) return
         chattORE.database.removeNickname(event.player.uniqueId)
     }
 
-    @Subscribe
-    fun joinMessage(event: ServerPostConnectEvent) {
-        if (event.player.uniqueId in chattORE.onlinePlayers) return
-        chattORE.onlinePlayers.add(event.player.uniqueId)
+    fun joinMessage(event: LoginEvent) {
         val username = event.player.username
         chattORE.broadcast(
             chattORE.config[ChattORESpec.format.join].render(mapOf(
@@ -62,15 +63,14 @@ class ChatListener(
         chattORE.broadcastPlayerConnection(
             chattORE.config[ChattORESpec.format.joinDiscord].replace(
                 "<player>",
-                username
+                username.discordEscape()
             )
         )
     }
 
     @Subscribe
     fun leaveMessage(event: DisconnectEvent) {
-        if (event.player.uniqueId !in chattORE.onlinePlayers) return
-        chattORE.onlinePlayers.remove(event.player.uniqueId)
+        if (event.loginStatus != DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN) return
         val username = event.player.username
         chattORE.broadcast(
             chattORE.config[ChattORESpec.format.leave].render(mapOf(
@@ -80,7 +80,7 @@ class ChatListener(
         chattORE.broadcastPlayerConnection(
             chattORE.config[ChattORESpec.format.leaveDiscord].replace(
                 "<player>",
-                username
+                username.discordEscape()
             )
         )
     }
@@ -90,14 +90,7 @@ class ChatListener(
         val pp = event.player
         pp.currentServer.ifPresent { server ->
             chattORE.logger.info("${pp.username} (${pp.uniqueId}): ${event.message}")
-            var result = event.message
-            if (event.message.contains("&k") && !pp.hasPermission("chattore.chat.obfuscate")) {
-                pp.sendMessage(chattORE.config[ChattORESpec.format.error].render(mapOf(
-                    "message" to "You do not have permission to obfuscate text!".toComponent()
-                )))
-                result = event.message.replace("&k", "")
-            }
-            chattORE.broadcastChatMessage(server.serverInfo.name, pp.uniqueId, result)
+            chattORE.broadcastChatMessage(server.serverInfo.name, pp.uniqueId, event.message)
         }
     }
 

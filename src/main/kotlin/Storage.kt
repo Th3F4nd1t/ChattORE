@@ -1,13 +1,15 @@
 package chattore
 
 import chattore.commands.MailboxItem
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.statements.api.ExposedBlob
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
+import kotlin.reflect.KClass
 
 object About : Table("about") {
     val uuid = varchar("about_uuid", 36).uniqueIndex()
@@ -37,20 +39,49 @@ object UsernameCache : Table("username_cache") {
     override val primaryKey = PrimaryKey(uuid)
 }
 
-object Setting : Table("setting") {
+object SettingTable : Table("setting") {
     val uuid = varchar("setting_uuid", 36).index()
     val key = varchar("setting_key", 16).index()
     val value = blob("setting_value")
     init {
-        Setting.uniqueIndex(uuid, key)
+        SettingTable.uniqueIndex(uuid, key)
     }
 }
 
-fun serializeSetting(value: JsonElement) : ExposedBlob =
-    ExposedBlob(Json.encodeToString(JsonElement.serializer(), value).toByteArray())
+@Serializable
+sealed class Setting
 
-fun deserializeSetting(blob: ExposedBlob) : JsonElement =
-    Json.decodeFromString(blob.bytes.decodeToString())
+@Serializable
+data class SpySetting(val enabled: Boolean) : Setting() {
+    companion object {
+        const val KEY = "spy"
+    }
+}
+
+val jsonHelper = Json {
+    prettyPrint = true
+    ignoreUnknownKeys = true
+}
+
+fun <T : Setting> keyForSetting(clazz: KClass<T>) : String {
+    return when(clazz) {
+        SpySetting::class -> SpySetting.KEY
+        else -> throw IllegalArgumentException("Unsupported setting type")
+    }
+}
+
+inline fun <reified T : Setting> blobToSetting(blob: ByteArray): T? {
+    val jsonString = String(blob)
+    return when (T::class) {
+        SpySetting::class -> jsonHelper.decodeFromString<SpySetting>(jsonString) as? T
+        else -> throw IllegalArgumentException("Unsupported setting type")
+    }
+}
+
+inline fun <reified T : Setting> settingToBlob(setting: T): ByteArray {
+    val jsonString = jsonHelper.encodeToString(setting)
+    return jsonString.toByteArray()
+}
 
 class Storage(
     dbFile: String
@@ -64,7 +95,7 @@ class Storage(
     }
 
     private fun initTables() = transaction(database) {
-        SchemaUtils.create(About, Mail, Nick, UsernameCache, Setting)
+        SchemaUtils.create(About, Mail, Nick, UsernameCache, SettingTable)
     }
 
     fun setAbout(uuid: UUID, about: String) = transaction(database) {
@@ -78,21 +109,31 @@ class Storage(
         About.selectAll().where { About.uuid eq uuid.toString() }.firstOrNull()?.let { it[About.about] }
     }
 
-    fun setSetting(uuid: UUID, key: String, element: JsonElement) = transaction(database) {
-        Setting.upsert {
-            it[this.uuid] = uuid.toString()
-            it[this.key] = key
-            it[this.value] = serializeSetting(element)
-        }
-    }
-
     fun unsetSetting(uuid: UUID, key: String) = transaction(database) {
-        Setting.deleteWhere { (Setting.uuid eq uuid.toString()) and (Setting.key eq key) }
+        SettingTable.deleteWhere { (SettingTable.uuid eq uuid.toString()) and (SettingTable.key eq key) }
     }
 
-    fun getSettings(uuid: UUID) : Map<String, JsonElement> = transaction(database) {
-        Setting.selectAll().where { Setting.uuid eq uuid.toString() }.associate {
-            it[Setting.key] to deserializeSetting(it[Setting.value])
+    fun getRawSetting(uuid: UUID, key: String): ByteArray? = transaction(database) {
+        SettingTable.select(SettingTable.value).where {
+            (SettingTable.uuid eq uuid.toString()) and (SettingTable.key eq key)
+        }.singleOrNull()?.get(SettingTable.value)?.bytes
+    }
+
+    inline fun <reified T : Setting> getSetting(uuid: UUID): T? {
+        val key = keyForSetting(T::class)
+        val blob = getRawSetting(uuid, key)
+        return blob?.let { blobToSetting<T>(it) }
+    }
+
+    fun setSetting(uuid: UUID, setting: Setting) {
+        val key = keyForSetting(setting::class)
+        val blob = settingToBlob(setting)
+        transaction(database) {
+            SettingTable.upsert {
+                it[this.uuid] = uuid.toString()
+                it[this.key] = key
+                it[this.value] = ExposedBlob(blob)
+            }
         }
     }
 

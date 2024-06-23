@@ -364,8 +364,8 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
                     && (it.uniqueId != exclude)
         }
         for (user in privileged) {
-            val setting = database.getSettings(user.uniqueId)["spy"]
-            val spying = setting?.jsonPrimitive?.booleanOrNull ?: false
+            val setting = database.getSetting<SpySetting>(user.uniqueId)
+            val spying = setting?.enabled ?: false
             if (spying) {
                 user.sendMessage(component)
             }

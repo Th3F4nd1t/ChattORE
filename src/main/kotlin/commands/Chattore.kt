@@ -32,9 +32,9 @@ class Chattore(private val chattORE: ChattORE) : BaseCommand() {
 
     @Subcommand("spy")
     fun spy(player: Player) {
-        val setting = chattORE.database.getSetting(SpySetting, player.uniqueId)
+        val setting = chattORE.database.getSetting(SpyEnabled, player.uniqueId)
         val newSetting = !(setting ?: false)
-        chattORE.database.setSetting(SpySetting, player.uniqueId, newSetting)
+        chattORE.database.setSetting(SpyEnabled, player.uniqueId, newSetting)
         player.sendMessage(
             chattORE.config[ChattORESpec.format.chattore].render(
                 if (newSetting) {

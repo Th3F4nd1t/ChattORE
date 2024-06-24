@@ -310,7 +310,7 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
             "username" to player.username.toComponent()
         )).let {
             "<click:run_command:'/playerprofile info ${player.username}'><message></click>".render(it)
-        };
+        }
 
         val prefix = luckUser.cachedData.metaData.prefix
             ?: luckUser.primaryGroup.replaceFirstChar(Char::uppercaseChar)
@@ -364,7 +364,7 @@ class ChattORE @Inject constructor(val proxy: ProxyServer, val logger: Logger, @
                     && (it.uniqueId != exclude)
         }
         for (user in privileged) {
-            val setting = database.getSetting(SpySetting, user.uniqueId)
+            val setting = database.getSetting(SpyEnabled, user.uniqueId)
             val spying = setting ?: false
             if (spying) {
                 user.sendMessage(component)

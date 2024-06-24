@@ -1,7 +1,6 @@
 package chattore
 
 import chattore.commands.MailboxItem
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.*
@@ -49,7 +48,7 @@ object SettingTable : Table("setting") {
 
 open class Setting<T>(val key: String)
 
-object SpySetting : Setting<Boolean>("spy")
+object SpyEnabled : Setting<Boolean>("spy")
 
 val jsonHelper = Json {
     prettyPrint = true

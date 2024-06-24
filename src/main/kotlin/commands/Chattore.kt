@@ -1,13 +1,10 @@
 package chattore.commands
 
-import chattore.ChattORE
-import chattore.SpySetting
-import chattore.render
+import chattore.*
 import co.aikar.commands.BaseCommand
 import co.aikar.commands.annotation.*
 import com.velocitypowered.api.proxy.Player
 import chattore.entity.ChattORESpec
-import chattore.legacyDeserialize
 
 @CommandAlias("chattore")
 @CommandPermission("chattore.manage")
@@ -35,9 +32,9 @@ class Chattore(private val chattORE: ChattORE) : BaseCommand() {
 
     @Subcommand("spy")
     fun spy(player: Player) {
-        val setting = chattORE.database.getSetting<SpySetting>(player.uniqueId)
-        val newSetting = !(setting?.enabled ?: false)
-        chattORE.database.setSetting(player.uniqueId, SpySetting(newSetting))
+        val setting = chattORE.database.getSetting(SpySetting, player.uniqueId)
+        val newSetting = !(setting ?: false)
+        chattORE.database.setSetting(SpySetting, player.uniqueId, newSetting)
         player.sendMessage(
             chattORE.config[ChattORESpec.format.chattore].render(
                 if (newSetting) {

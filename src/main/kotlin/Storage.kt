@@ -47,7 +47,6 @@ object SettingTable : Table("setting") {
     }
 }
 
-@Serializable
 open class Setting<T>(val key: String)
 
 object SpySetting : Setting<Boolean>("spy")
